@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm run *)",
+      "Skill(run)",
+      "PowerShell(Start-Process -NoNewWindow -FilePath \"npm\" -ArgumentList \"run\",\"dev\" -PassThru | Select-Object Id)",
+      "Bash(chromium-cli *)",
+      "Bash(node -e \"const { chromium } = require\\('playwright'\\); \\(async \\(\\) => { const b = await chromium.launch\\({args:['--no-sandbox']}\\); const p = await b.newPage\\(\\); await p.goto\\('http://localhost:3000'\\); await p.waitForSelector\\('h1'\\); await p.screenshot\\({path:'/tmp/disney-app.png', fullPage: false}\\); await b.close\\(\\); console.log\\('done'\\); }\\)\\(\\)\")",
+      "Bash(curl -sf http://localhost:3000/api/parks)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -sf \"https://api.themeparks.wiki/v1/entity/faff60df-c766-4470-8adb-dee78e813f42/live\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -sf \"https://api.themeparks.wiki/v1/entity/3cc919f1-d16d-43e0-8c3f-1dd269bd1a42/children\")",
+      "Bash(wait)",
+      "Bash(npm run *)"
+    ]
+  }
+}
