@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { toJapaneseName } from "@/lib/nameMap";
 import type {
   Park,
   LiveEntity,
@@ -127,7 +128,8 @@ export default function Home() {
     const ORDER: Record<StatusType, number> = { OPERATING: 0, DOWN: 1, CLOSED: 2, REFURBISHMENT: 3, NO_DATA: 4 };
 
     return [...data].sort((a, b) => {
-      if (sort === "name") return a.name.localeCompare(b.name, "ja");
+      if (sort === "name")
+        return toJapaneseName(a.name).localeCompare(toJapaneseName(b.name), "ja");
       if (sort === "status") return ORDER[a.status] - ORDER[b.status];
       if (a.status === "OPERATING" && b.status !== "OPERATING") return -1;
       if (a.status !== "OPERATING" && b.status === "OPERATING") return 1;
@@ -375,6 +377,7 @@ function EntityCard({ entity }: { entity: LiveEntity }) {
   const s = STATUS[entity.status] ?? STATUS.CLOSED;
   const icon = TYPE_ICON[entity.entityType] ?? "🎪";
   const typeLabel = TYPE_LABEL[entity.entityType] ?? entity.entityType;
+  const jaName = toJapaneseName(entity.name);
   const standby = entity.queue?.STANDBY?.waitTime;
   const single = entity.queue?.SINGLE_RIDER?.waitTime;
 
@@ -395,7 +398,7 @@ function EntityCard({ entity }: { entity: LiveEntity }) {
             <span>{icon}</span>
             <span>{typeLabel}</span>
           </div>
-          <h3 className="font-semibold text-gray-800 text-sm leading-snug">{entity.name}</h3>
+          <h3 className="font-semibold text-gray-800 text-sm leading-snug">{jaName}</h3>
         </div>
         <span
           className={`shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.badge}`}
