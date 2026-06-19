@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toJapaneseName } from "@/lib/nameMap";
 import type {
   Park,
@@ -69,6 +69,21 @@ export default function Home() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [sort, setSort] = useState<SortType>("waitTime");
 
+  // 通知設定
+  const [supportsPush, setSupportsPush] = useState(false);
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const [notifThreshold, setNotifThreshold] = useState(10);
+  const [notifLoading, setNotifLoading] = useState(false);
+
+  // 最新値を非同期関数から参照するためのref
+  const favoritesRef = useRef(favorites);
+  const liveDataRef = useRef(liveData);
+  const notifThresholdRef = useRef(notifThreshold);
+
+  useEffect(() => { favoritesRef.current = favorites; }, [favorites]);
+  useEffect(() => { liveDataRef.current = liveData; }, [liveData]);
+  useEffect(() => { notifThresholdRef.current = notifThreshold; }, [notifThreshold]);
+
   // LocalStorageからお気に入り読み込み
   useEffect(() => {
     const stored = localStorage.getItem("disney-favorites");
@@ -88,6 +103,28 @@ export default function Home() {
       return next;
     });
   }, []);
+
+  // Service Worker登録 & 通知状態確認
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    setSupportsPush(true);
+    navigator.serviceWorker.register("/sw.js").catch(console.error);
+
+    const saved = localStorage.getItem("notif-threshold");
+    if (saved) setNotifThreshold(Number(saved));
+
+    navigator.serviceWorker.ready.then(async (reg) => {
+      const sub = await reg.pushManager.getSubscription();
+      setNotifEnabled(!!sub);
+    });
+  }, []);
+
+  // ライブデータ取得後に通知設定をサーバーと同期（アトラクション名も含めて送信）
+  useEffect(() => {
+    if (!notifEnabled || liveData.length === 0) return;
+    syncSubscription();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifEnabled, liveData]);
 
   // パーク一覧取得
   useEffect(() => {
@@ -221,6 +258,109 @@ export default function Home() {
   const fmtCountdown = (s: number) =>
     `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+  // ── 通知ヘルパー ──────────────────────────────────────────────────────────
+
+  function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(base64);
+    const buffer = new ArrayBuffer(raw.length);
+    const output = new Uint8Array(buffer);
+    for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+    return output;
+  }
+
+  async function syncSubscription() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) return;
+      const fav = favoritesRef.current;
+      const live = liveDataRef.current;
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          favorites: [...fav],
+          threshold: notifThresholdRef.current,
+          attractionNames: Object.fromEntries(
+            [...fav].map((id) => [
+              id,
+              toJapaneseName(live.find((e) => e.id === id)?.name ?? id),
+            ])
+          ),
+        }),
+      });
+    } catch {
+      // サイレントに失敗 — 次回ロード時に再試行
+    }
+  }
+
+  async function enableNotifications() {
+    if (!("Notification" in window)) return;
+    setNotifLoading(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        alert("通知の許可が必要です。iPhoneの設定 > Safari > 通知 から許可してください。");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(
+          process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!
+        ),
+      });
+      const fav = favoritesRef.current;
+      const live = liveDataRef.current;
+      const res = await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          favorites: [...fav],
+          threshold: notifThresholdRef.current,
+          attractionNames: Object.fromEntries(
+            [...fav].map((id) => [
+              id,
+              toJapaneseName(live.find((e) => e.id === id)?.name ?? id),
+            ])
+          ),
+        }),
+      });
+      if (!res.ok) throw new Error("subscribe failed");
+      setNotifEnabled(true);
+      localStorage.setItem("notif-threshold", String(notifThresholdRef.current));
+    } catch {
+      alert("通知の設定に失敗しました。しばらく後に再試行してください。");
+    } finally {
+      setNotifLoading(false);
+    }
+  }
+
+  async function disableNotifications() {
+    setNotifLoading(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await fetch("/api/push/unsubscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        });
+        await sub.unsubscribe();
+      }
+      setNotifEnabled(false);
+    } catch {
+      alert("通知の解除に失敗しました。");
+    } finally {
+      setNotifLoading(false);
+    }
+  }
+
   // ── レンダリング ──────────────────────────────────────────────────────────
 
   return (
@@ -347,6 +487,72 @@ export default function Home() {
           </div>
         </div>
 
+        {/* 待ち時間通知 */}
+        {supportsPush && (
+          <div className="bg-white rounded-2xl shadow-sm p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-700">🔔 待ち時間通知</span>
+                {notifEnabled && (
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                )}
+              </div>
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  notifEnabled
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-gray-500"
+                }`}
+              >
+                {notifEnabled ? "ON" : "OFF"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 mb-3 text-sm text-gray-600 flex-wrap">
+              <span>お気に入りが</span>
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={notifThreshold}
+                onChange={(e) => {
+                  const v = Math.max(1, Math.min(120, Number(e.target.value)));
+                  setNotifThreshold(v);
+                  localStorage.setItem("notif-threshold", String(v));
+                }}
+                className="w-14 text-center border border-gray-200 rounded-lg px-1 py-1 text-sm font-bold text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+              <span>分以下になったら通知</span>
+            </div>
+            {!notifEnabled && favorites.size === 0 && (
+              <p className="text-xs text-amber-600 mb-2">
+                ❤️ まずカードのハートボタンでお気に入りを追加してください
+              </p>
+            )}
+            <button
+              onClick={notifEnabled ? disableNotifications : enableNotifications}
+              disabled={notifLoading || (!notifEnabled && favorites.size === 0)}
+              className={`w-full py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 ${
+                notifEnabled
+                  ? "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  : "bg-indigo-600 text-white hover:bg-indigo-700"
+              }`}
+            >
+              {notifLoading
+                ? "処理中..."
+                : notifEnabled
+                ? "🔕 通知をOFFにする"
+                : "🔔 通知をONにする"}
+            </button>
+            {notifEnabled && (
+              <p className="text-xs text-gray-400 mt-2 text-center">
+                {favorites.size > 0
+                  ? `${favorites.size}件のお気に入りを監視中 · 5分ごとに確認`
+                  : "❤️ お気に入りを追加すると通知が届きます"}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* エラー */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-red-700 text-sm">
@@ -469,7 +675,6 @@ function FilterRow({
 }
 
 function PaidReturnBadge({ paid }: { paid: PaidReturnTime }) {
-  // このAPIは price / returnTime を提供しておらず state のみ取得可能
   const stateLabel =
     paid.state === "AVAILABLE"
       ? { text: "利用可能", cls: "text-purple-600" }

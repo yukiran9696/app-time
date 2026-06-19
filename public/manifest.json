@@ -1,0 +1,18 @@
+{
+  "name": "東京ディズニー 待ち時間",
+  "short_name": "待ち時間",
+  "description": "東京ディズニーランド・ディズニーシーのリアルタイム待ち時間と待ち時間アラート",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#312e81",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
