@@ -17,7 +17,11 @@
       "Bash(curl -sf \"http://localhost:3000/api/live/3cc919f1-d16d-43e0-8c3f-1dd269bd1a42\")",
       "Bash(curl -sf \"http://localhost:3000/api/live/67b290d5-3478-4f23-b601-2f8fb71ba803\")",
       "Bash(npx tsx *)",
-      "Bash(timeout 60 bash -c 'until curl -sf http://localhost:3000 >/dev/null 2>&1; do sleep 1; done')"
+      "Bash(timeout 60 bash -c 'until curl -sf http://localhost:3000 >/dev/null 2>&1; do sleep 1; done')",
+      "WebFetch(domain:api.themeparks.wiki)",
+      "WebFetch(domain:www.tokyodisneyresort.jp)",
+      "WebSearch",
+      "WebFetch(domain:store.disney.co.jp)"
     ]
   }
 }

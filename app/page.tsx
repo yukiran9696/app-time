@@ -10,6 +10,8 @@ import type {
   CategoryFilter,
   StatusFilter,
   SortType,
+  ScheduleEntry,
+  PaidReturnTime,
 } from "@/types";
 
 // ── 定数 ────────────────────────────────────────────────────────────────────
@@ -55,15 +57,37 @@ export default function Home() {
   const [parks, setParks] = useState<Park[]>([]);
   const [parkIndex, setParkIndex] = useState(0);
   const [liveData, setLiveData] = useState<LiveEntity[]>([]);
+  const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [parksLoading, setParksLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [countdown, setCountdown] = useState(REFRESH_SEC);
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
 
   const [catFilter, setCatFilter] = useState<CategoryFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [sort, setSort] = useState<SortType>("waitTime");
+
+  // LocalStorageからお気に入り読み込み
+  useEffect(() => {
+    const stored = localStorage.getItem("disney-favorites");
+    if (stored) {
+      try {
+        setFavorites(new Set(JSON.parse(stored)));
+      } catch {}
+    }
+  }, []);
+
+  const toggleFavorite = useCallback((id: string) => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      localStorage.setItem("disney-favorites", JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   // パーク一覧取得
   useEffect(() => {
@@ -95,9 +119,24 @@ export default function Home() {
     }
   }, [parks, parkIndex]);
 
+  // スケジュール取得
+  const fetchSchedule = useCallback(async () => {
+    const park = parks[parkIndex];
+    if (!park) return;
+    try {
+      const res = await fetch(`/api/schedule/${park.id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setSchedule(data.schedule ?? []);
+    } catch {}
+  }, [parks, parkIndex]);
+
   useEffect(() => {
-    if (parks.length > 0) fetchLive();
-  }, [fetchLive, parks]);
+    if (parks.length > 0) {
+      fetchLive();
+      fetchSchedule();
+    }
+  }, [fetchLive, fetchSchedule, parks]);
 
   // 自動更新 + カウントダウン
   useEffect(() => {
@@ -112,11 +151,24 @@ export default function Home() {
     };
   }, [fetchLive]);
 
+  // 本日のスケジュール（JST基準）
+  const todaySchedule = useMemo(() => {
+    const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+    return schedule.find((s) => s.date === today && s.type === "OPERATING") ?? null;
+  }, [schedule]);
+
+  // 閉園が20時より前なら早閉め扱い
+  const isEarlyClosing = useMemo(() => {
+    if (!todaySchedule?.closingTime) return false;
+    return parseInt(todaySchedule.closingTime.slice(11, 13), 10) < 20;
+  }, [todaySchedule]);
+
   // フィルタ & ソート
   const filtered = useMemo(() => {
     let data = liveData.filter((e) => e.entityType !== "MERCHANDISE");
 
-    if (catFilter === "ATTRACTION") data = data.filter((e) => e.entityType === "ATTRACTION");
+    if (catFilter === "FAVORITES") data = data.filter((e) => favorites.has(e.id));
+    else if (catFilter === "ATTRACTION") data = data.filter((e) => e.entityType === "ATTRACTION");
     else if (catFilter === "FOOD") data = data.filter((e) => FOOD_TYPES.has(e.entityType));
     else if (catFilter === "ENTERTAINMENT") data = data.filter((e) => SHOW_TYPES.has(e.entityType));
     else if (catFilter === "GREETING") data = data.filter((e) => e.entityType === "MEET_AND_GREET");
@@ -124,8 +176,16 @@ export default function Home() {
     if (statusFilter === "OPERATING") data = data.filter((e) => e.status === "OPERATING");
     else if (statusFilter === "INACTIVE")
       data = data.filter((e) => e.status !== "OPERATING" && e.status !== "NO_DATA");
+    else if (statusFilter === "ZERO_WAIT")
+      data = data.filter(
+        (e) =>
+          e.status === "OPERATING" &&
+          (e.queue?.STANDBY?.waitTime === 0 || e.queue?.STANDBY?.waitTime == null)
+      );
 
-    const ORDER: Record<StatusType, number> = { OPERATING: 0, DOWN: 1, CLOSED: 2, REFURBISHMENT: 3, NO_DATA: 4 };
+    const ORDER: Record<StatusType, number> = {
+      OPERATING: 0, DOWN: 1, CLOSED: 2, REFURBISHMENT: 3, NO_DATA: 4,
+    };
 
     return [...data].sort((a, b) => {
       if (sort === "name")
@@ -137,7 +197,7 @@ export default function Home() {
       const bw = b.queue?.STANDBY?.waitTime ?? -1;
       return bw - aw;
     });
-  }, [liveData, catFilter, statusFilter, sort]);
+  }, [liveData, catFilter, statusFilter, sort, favorites]);
 
   // 統計
   const stats = useMemo(() => {
@@ -171,8 +231,27 @@ export default function Home() {
           <h1 className="text-2xl font-bold tracking-tight">🏰 東京ディズニー 待ち時間</h1>
           <p className="text-blue-200 text-sm mt-0.5">リアルタイム情報</p>
 
+          {/* 本日の営業時間 */}
+          {todaySchedule && (
+            <div
+              className={`flex items-center gap-2 mt-2 text-sm ${
+                isEarlyClosing ? "text-amber-300" : "text-blue-200"
+              }`}
+            >
+              <span>
+                🕘 開園 {todaySchedule.openingTime.slice(11, 16)} 〜 閉園{" "}
+                {todaySchedule.closingTime.slice(11, 16)}
+              </span>
+              {isEarlyClosing && (
+                <span className="bg-amber-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+                  ⚠️ 早閉め
+                </span>
+              )}
+            </div>
+          )}
+
           {/* パークタブ */}
-          <div className="flex gap-1 mt-5">
+          <div className="flex gap-1 mt-4">
             {parksLoading ? (
               <div className="text-blue-300 text-sm pb-3 animate-pulse">読み込み中...</div>
             ) : (
@@ -234,6 +313,10 @@ export default function Home() {
               { key: "FOOD", label: "🍽️ レストラン・フード" },
               { key: "ENTERTAINMENT", label: "🎭 エンターテイメント" },
               { key: "GREETING", label: "🤝 グリーティング" },
+              {
+                key: "FAVORITES",
+                label: `❤️ お気に入り${favorites.size > 0 ? ` (${favorites.size})` : ""}`,
+              },
             ]}
             activeClass="bg-indigo-600 text-white"
           />
@@ -245,6 +328,7 @@ export default function Home() {
               options={[
                 { key: "ALL", label: "すべて" },
                 { key: "OPERATING", label: "営業中のみ" },
+                { key: "ZERO_WAIT", label: "⚡ 今すぐ乗れる" },
                 { key: "INACTIVE", label: "休止・停止のみ" },
               ]}
               activeClass="bg-green-600 text-white"
@@ -292,15 +376,26 @@ export default function Home() {
         {/* 結果なし */}
         {!loading && !error && liveData.length > 0 && filtered.length === 0 && (
           <div className="text-center py-20 text-gray-400">
-            <div className="text-5xl mb-4">🔍</div>
-            <p>条件に一致する施設が見つかりません</p>
+            <div className="text-5xl mb-4">
+              {catFilter === "FAVORITES" ? "❤️" : "🔍"}
+            </div>
+            <p>
+              {catFilter === "FAVORITES"
+                ? "お気に入りに登録された施設がありません"
+                : "条件に一致する施設が見つかりません"}
+            </p>
           </div>
         )}
 
         {/* カードグリッド */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map((entity) => (
-            <EntityCard key={entity.id} entity={entity} />
+            <EntityCard
+              key={entity.id}
+              entity={entity}
+              isFavorite={favorites.has(entity.id)}
+              onToggleFavorite={() => toggleFavorite(entity.id)}
+            />
           ))}
         </div>
       </div>
@@ -373,13 +468,39 @@ function FilterRow({
   );
 }
 
-function EntityCard({ entity }: { entity: LiveEntity }) {
+function PaidReturnBadge({ paid }: { paid: PaidReturnTime }) {
+  // このAPIは price / returnTime を提供しておらず state のみ取得可能
+  const stateLabel =
+    paid.state === "AVAILABLE"
+      ? { text: "利用可能", cls: "text-purple-600" }
+      : paid.state === "FINISHED"
+      ? { text: "本日終了", cls: "text-gray-400" }
+      : { text: "一時受付停止", cls: "text-gray-400" };
+
+  return (
+    <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-1.5">
+      <span className="text-xs font-semibold text-purple-700">💎 プレミアアクセス</span>
+      <span className={`text-xs ${stateLabel.cls}`}>{stateLabel.text}</span>
+    </div>
+  );
+}
+
+function EntityCard({
+  entity,
+  isFavorite,
+  onToggleFavorite,
+}: {
+  entity: LiveEntity;
+  isFavorite: boolean;
+  onToggleFavorite: () => void;
+}) {
   const s = STATUS[entity.status] ?? STATUS.CLOSED;
   const icon = TYPE_ICON[entity.entityType] ?? "🎪";
   const typeLabel = TYPE_LABEL[entity.entityType] ?? entity.entityType;
   const jaName = toJapaneseName(entity.name);
   const standby = entity.queue?.STANDBY?.waitTime;
   const single = entity.queue?.SINGLE_RIDER?.waitTime;
+  const paid = entity.queue?.PAID_RETURN_TIME;
 
   const updatedAt = entity.lastUpdated
     ? new Date(entity.lastUpdated).toLocaleTimeString("ja-JP", {
@@ -400,12 +521,21 @@ function EntityCard({ entity }: { entity: LiveEntity }) {
           </div>
           <h3 className="font-semibold text-gray-800 text-sm leading-snug">{jaName}</h3>
         </div>
-        <span
-          className={`shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.badge}`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-          {s.label}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onToggleFavorite}
+            className="text-lg leading-none transition-transform hover:scale-125 active:scale-110"
+            title={isFavorite ? "お気に入りを解除" : "お気に入りに追加"}
+          >
+            {isFavorite ? "❤️" : "🤍"}
+          </button>
+          <span
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.badge}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+            {s.label}
+          </span>
+        </div>
       </div>
 
       <div className="mt-3 min-h-[2.5rem]">
@@ -441,6 +571,8 @@ function EntityCard({ entity }: { entity: LiveEntity }) {
           <p className="text-slate-300 text-sm">リアルタイム情報なし</p>
         )}
       </div>
+
+      {paid && <PaidReturnBadge paid={paid} />}
 
       {updatedAt && (
         <div className="text-right text-xs text-gray-300 mt-2">更新 {updatedAt}</div>
