@@ -10,7 +10,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: "東京ディズニー 待ち時間",
-  description: "東京ディズニーランド・ディズニーシーのリアルタイム待ち時間と営業状況",
+  description: "東京ディズニーランド・ディズニーシーのリアルタイム待ち時間",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
